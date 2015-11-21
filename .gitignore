@@ -30,3 +30,6 @@ hsenv.log
 \#*#
 .#*
 *_stub.h
+.stack-work/
+.tags
+.tags1
