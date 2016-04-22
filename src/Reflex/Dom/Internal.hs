@@ -33,7 +33,7 @@ import Data.Monoid ((<>))
 data GuiEnv t h
    = GuiEnv { _guiEnvDocument :: !HTMLDocument
             , _guiEnvPostGui :: !(h () -> IO ())
-            , _guiEnvRunWithActions :: !([DSum (EventTrigger t)] -> h ())
+            , _guiEnvRunWithActions :: !([DSum (EventTrigger t) Identity] -> h ())
             , _guiEnvWebView :: !WebView
             }
 
@@ -161,6 +161,10 @@ instance ( MonadRef m, Ref m ~ Ref IO, MonadRef h, Ref h ~ Ref IO --TODO: Should
     return (result, mergeWith (>>) actions)
 --  runWidget :: (Monad m, IsNode n, Reflex t) => n -> Widget t m a -> m (a, Event t (m ()))
   getRunWidget = return runWidget
+
+getQuitWidget :: MonadWidget t m => m (WidgetHost m ())
+getQuitWidget = return $ do wv <- askWebView
+                            liftIO $ quitWebView wv
 
 runWidget :: (Monad m, Reflex t, IsNode n) => n -> Widget t (Gui t h m) a -> WidgetHost (Widget t (Gui t h m)) (a, WidgetHost (Widget t (Gui t h m)) (), Event t (WidgetHost (Widget t (Gui t h m)) ()))
 runWidget rootElement w = do

@@ -2,7 +2,7 @@
 
 module Reflex.Dom.Xhr.Foreign (
     XMLHttpRequest
-  , XMLHttpRequestResponseType
+  , XMLHttpRequestResponseType(..)
   , module Reflex.Dom.Xhr.Foreign
 ) where
 
@@ -15,21 +15,30 @@ import GHCJS.DOM.XMLHttpRequest
 import Data.Maybe (fromMaybe)
 import GHCJS.DOM.EventTarget (dispatchEvent)
 import GHCJS.DOM.EventM (EventM, on)
+import Reflex.Dom.Internal.Foreign
+import Reflex.Dom.Xhr.Exception
+import Reflex.Dom.Xhr.ResponseType
+import Control.Exception (catch, throwIO)
 
 prepareWebView :: WebView -> IO ()
 prepareWebView _ = return ()
 
 xmlHttpRequestNew :: a -> IO XMLHttpRequest
-xmlHttpRequestNew _ = newXMLHttpRequest -- XMLHttpRequest <$> ghcjs_dom_xml_http_request_new
+xmlHttpRequestNew _ = newXMLHttpRequest
 
 xmlHttpRequestOpen ::
                    (ToJSString method, ToJSString url, ToJSString user, ToJSString password) =>
                      XMLHttpRequest -> method -> url -> Bool -> user -> password -> IO ()
 xmlHttpRequestOpen = open
 
+convertException :: XHRError -> XhrException
+convertException e = case e of
+  XHRError -> XhrException_Error
+  XHRAborted -> XhrException_Aborted
+
 -- This used to be a non blocking call, but now it uses an interruptible ffi
 xmlHttpRequestSend :: ToJSString payload => XMLHttpRequest -> Maybe payload -> IO ()
-xmlHttpRequestSend self = maybe (send self) (sendString self)
+xmlHttpRequestSend self p = (maybe (send self) (sendString self) p) `catch` (throwIO . convertException)
 
 xmlHttpRequestSetRequestHeader :: (ToJSString header, ToJSString value)
                                => XMLHttpRequest -> header -> value -> IO ()
@@ -96,26 +105,49 @@ xmlHttpRequestGetUpload = getUpload
 xmlHttpRequestGetResponseText :: FromJSString result => XMLHttpRequest -> IO (Maybe result)
 xmlHttpRequestGetResponseText = getResponseText
 
-responseTextToText :: Maybe Text -> Maybe Text
-responseTextToText = id
-
 xmlHttpRequestGetResponseXML :: XMLHttpRequest -> IO (Maybe Document)
 xmlHttpRequestGetResponseXML = getResponseXML
 
 xmlHttpRequestSetResponseType :: XMLHttpRequest -> XMLHttpRequestResponseType -> IO ()
 xmlHttpRequestSetResponseType = setResponseType
 
-toResponseType :: a -> a
-toResponseType = id
+fromResponseType :: XhrResponseType -> XMLHttpRequestResponseType
+fromResponseType XhrResponseType_Default = XMLHttpRequestResponseType
+fromResponseType XhrResponseType_ArrayBuffer = XMLHttpRequestResponseTypeArraybuffer
+fromResponseType XhrResponseType_Blob = XMLHttpRequestResponseTypeBlob
+fromResponseType XhrResponseType_Text = XMLHttpRequestResponseTypeText
 
-xmlHttpRequestGetResponseType :: XMLHttpRequest -> IO XMLHttpRequestResponseType
-xmlHttpRequestGetResponseType = getResponseType
+toResponseType :: XMLHttpRequestResponseType -> Maybe XhrResponseType
+toResponseType XMLHttpRequestResponseType = Just XhrResponseType_Default
+toResponseType XMLHttpRequestResponseTypeArraybuffer = Just XhrResponseType_ArrayBuffer
+toResponseType XMLHttpRequestResponseTypeBlob = Just XhrResponseType_Blob
+toResponseType XMLHttpRequestResponseTypeText = Just XhrResponseType_Text
+toResponseType _ = Nothing
+
+xmlHttpRequestGetResponseType :: XMLHttpRequest -> IO (Maybe XhrResponseType)
+xmlHttpRequestGetResponseType = fmap toResponseType . getResponseType
 
 xmlHttpRequestGetStatus :: XMLHttpRequest -> IO Word
 xmlHttpRequestGetStatus = getStatus
 
 xmlHttpRequestGetStatusText :: FromJSString result => XMLHttpRequest -> IO result
 xmlHttpRequestGetStatusText = getStatusText
+
+xmlHttpRequestGetResponseURL :: FromJSString result => XMLHttpRequest -> IO result
+xmlHttpRequestGetResponseURL = getResponseURL
+
+xmlHttpRequestGetResponse :: XMLHttpRequest -> IO (Maybe XhrResponseBody)
+xmlHttpRequestGetResponse xhr = do
+  mr <- getResponse xhr
+  rt <- xmlHttpRequestGetResponseType xhr
+  case rt of
+       Just XhrResponseType_Blob -> return $ fmap (XhrResponseBody_Blob . castToBlob) mr
+       Just XhrResponseType_Text -> fmap (Just . XhrResponseBody_Text) $ xmlHttpRequestGetStatusText xhr
+       Just XhrResponseType_Default -> fmap (Just . XhrResponseBody_Text) $ xmlHttpRequestGetStatusText xhr
+       Just XhrResponseType_ArrayBuffer -> case (fmap unGObject mr) of
+         Nothing -> return Nothing
+         Just ptr -> fmap (Just . XhrResponseBody_ArrayBuffer) $ bsFromArrayBuffer ptr ptr
+       _ -> return Nothing
 
 xmlHttpRequestGetResponseURL :: FromJSString result => XMLHttpRequest -> IO result
 xmlHttpRequestGetResponseURL = getResponseURL

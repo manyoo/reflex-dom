@@ -10,19 +10,22 @@ import Reflex
 import Reflex.Host.Class
 import GHCJS.DOM.HTMLInputElement as Input
 import GHCJS.DOM.HTMLTextAreaElement as TextArea
-import GHCJS.DOM.Element
+import GHCJS.DOM.Element hiding (error)
 import GHCJS.DOM.HTMLSelectElement as Select
 import GHCJS.DOM.EventM
-import GHCJS.DOM.UIEvent
+import GHCJS.DOM.File
+import qualified GHCJS.DOM.FileList as FileList
 import Data.Monoid
-import Data.Map as Map
-import Control.Lens
+import qualified Data.Map as Map
+import Control.Lens hiding (ix)
 import Control.Monad hiding (forM_)
 import Control.Monad.IO.Class
+import qualified Data.Bimap as B
 import Data.Default
-import Data.Maybe
-import Safe
 import Data.Dependent.Sum (DSum (..))
+import Data.Map (Map)
+import Data.Maybe
+import Text.Read
 
 data TextInput t
    = TextInput { _textInput_value :: Dynamic t String
@@ -35,11 +38,11 @@ data TextInput t
                }
 
 data TextInputConfig t
-    = TextInputConfig { _textInputConfig_inputType :: String
-                      , _textInputConfig_initialValue :: String
-                      , _textInputConfig_setValue :: Event t String
-                      , _textInputConfig_attributes :: Dynamic t (Map String String)
-                      }
+   = TextInputConfig { _textInputConfig_inputType :: String
+                     , _textInputConfig_initialValue :: String
+                     , _textInputConfig_setValue :: Event t String
+                     , _textInputConfig_attributes :: Dynamic t (Map String String)
+                     }
 
 instance Reflex t => Default (TextInputConfig t) where
   def = TextInputConfig { _textInputConfig_inputType = "text"
@@ -48,6 +51,7 @@ instance Reflex t => Default (TextInputConfig t) where
                         , _textInputConfig_attributes = constDyn mempty
                         }
 
+-- | Create an input whose value is a string.  By default, the "type" attribute is set to "text", but it can be changed using the _textInputConfig_inputType field.  Note that only types for which the value is always a string will work - types whose value may be null will not work properly with this widget.
 textInput :: MonadWidget t m => TextInputConfig t -> m (TextInput t)
 textInput (TextInputConfig inputType initial eSetValue dAttrs) = do
   e <- liftM castToHTMLInputElement $ buildEmptyElement "input" =<< mapDyn (Map.insert "type" inputType) dAttrs
@@ -58,9 +62,9 @@ textInput (TextInputConfig inputType initial eSetValue dAttrs) = do
   runWithActions <- askRunWithActions
   eChangeFocus <- newEventWithTrigger $ \eChangeFocusTrigger -> do
     unsubscribeOnblur <- on e blurEvent $ liftIO $ do
-      postGui $ runWithActions [eChangeFocusTrigger :=> False]
+      postGui $ runWithActions [eChangeFocusTrigger :=> Identity False]
     unsubscribeOnfocus <- on e focusEvent $ liftIO $ do
-      postGui $ runWithActions [eChangeFocusTrigger :=> True]
+      postGui $ runWithActions [eChangeFocusTrigger :=> Identity True]
     return $ liftIO $ unsubscribeOnblur >> unsubscribeOnfocus
   dFocus <- holdDyn False eChangeFocus
   eKeypress <- wrapDomEvent e (`on` keyPress) getKeyEvent
@@ -100,9 +104,9 @@ textArea (TextAreaConfig initial eSet attrs) = do
   runWithActions <- askRunWithActions
   eChangeFocus <- newEventWithTrigger $ \eChangeFocusTrigger -> do
     unsubscribeOnblur <- on e blurEvent $ liftIO $ do
-      postGui $ runWithActions [eChangeFocusTrigger :=> False]
+      postGui $ runWithActions [eChangeFocusTrigger :=> Identity False]
     unsubscribeOnfocus <- on e focusEvent $ liftIO $ do
-      postGui $ runWithActions [eChangeFocusTrigger :=> True]
+      postGui $ runWithActions [eChangeFocusTrigger :=> Identity True]
     return $ liftIO $ unsubscribeOnblur >> unsubscribeOnfocus
   performEvent_ $ fmap (TextArea.setValue e . Just) eSet
   f <- holdDyn False eChangeFocus
@@ -150,6 +154,29 @@ checkboxView dAttrs dValue = do
   performEvent_ $ fmap (\v -> Input.setChecked e $! v) $ updated dValue
   return eClicked
 
+data FileInput t
+   = FileInput { _fileInput_value :: Dynamic t [File]
+               , _fileInput_element :: HTMLInputElement
+               }
+
+data FileInputConfig t
+   = FileInputConfig { _fileInputConfig_attributes :: Dynamic t (Map String String)
+                     }
+
+instance Reflex t => Default (FileInputConfig t) where
+  def = FileInputConfig { _fileInputConfig_attributes = constDyn mempty
+                        }
+
+fileInput :: MonadWidget t m => FileInputConfig t -> m (FileInput t)
+fileInput (FileInputConfig dAttrs) = do
+  e <- liftM castToHTMLInputElement $ buildEmptyElement "input" =<< mapDyn (Map.insert "type" "file") dAttrs
+  eChange <- wrapDomEvent e (flip on change) $ do
+    Just files <- getFiles e
+    len <- FileList.getLength files
+    mapM (liftM (fromMaybe (error "fileInput: fileListItem returned null")) . FileList.item files) $ init [0..len]
+  dValue <- holdDyn [] eChange
+  return $ FileInput dValue e
+
 data Dropdown t k
     = Dropdown { _dropdown_value :: Dynamic t k
                , _dropdown_change :: Event t k
@@ -166,26 +193,29 @@ instance (Reflex t, Ord k, Show k, Read k) => Default (DropdownConfig t k) where
                        }
 
 --TODO: We should allow the user to specify an ordering instead of relying on the ordering of the Map
---TODO: Get rid of Show k and Read k by indexing the possible values ourselves
 -- | Create a dropdown box
 --   The first argument gives the initial value of the dropdown; if it is not present in the map of options provided, it will be added with an empty string as its text
-dropdown :: forall k t m. (MonadWidget t m, Ord k, Show k, Read k) => k -> Dynamic t (Map k String) -> DropdownConfig t k -> m (Dropdown t k)
+dropdown :: forall k t m. (MonadWidget t m, Ord k) => k -> Dynamic t (Map k String) -> DropdownConfig t k -> m (Dropdown t k)
 dropdown k0 options (DropdownConfig setK attrs) = do
-  (eRaw, _) <- elDynAttr' "select" attrs $ do
-    optionsWithDefault <- mapDyn (`Map.union` (k0 =: "")) options
-    listWithKey optionsWithDefault $ \k v -> do
-      elAttr "option" ("value" =: show k <> if k == k0 then "selected" =: "selected" else mempty) $ dynText v
+  optionsWithAddedKeys <- combineDyn Map.union options <=< foldDyn Map.union (k0 =: "") $ fmap (=: "") setK
+  defaultKey <- holdDyn k0 setK
+  (indexedOptions, ixKeys) <- splitDyn <=< forDyn optionsWithAddedKeys $ \os ->
+    let xs =  map (\(ix, (k, v)) -> ((ix, k), ((ix, k), v))) $ zip [0::Int ..] $ Map.toList os
+        ixVals = Map.fromList $ map snd xs
+        ixKeys = B.fromList $ map fst xs
+    in (ixVals, ixKeys)
+  (eRaw, _) <- elDynAttr' "select" attrs $ listWithKey indexedOptions $ \(ix, k) v -> do
+    optionAttrs <- mapDyn (\dk -> "value" =: show ix <> if dk == k then "selected" =: "selected" else mempty) defaultKey
+    elDynAttr "option" optionAttrs $ dynText v
   let e = castToHTMLSelectElement $ _el_element eRaw
-  performEvent_ $ fmap (Select.setValue e . Just . show) setK
-  eChange <- wrapDomEvent e (`on` change) $ do
-    kStr <- fromMaybe "" <$> Select.getValue e
-    return $ readMay kStr
-  let readKey opts mk = fromMaybe k0 $ do
+  performEvent_ $ fmap (Select.setValue e . Just . show) $ attachDynWithMaybe (flip B.lookupR) ixKeys setK
+  eChange <- attachDynWith (\ks s -> join $ B.lookup <$> join (readMaybe <$> s) <*> pure ks) ixKeys <$> (wrapDomEvent e (`on` change) $ Select.getValue e)
+  let readKey keys mk = fromMaybe k0 $ do
         k <- mk
-        guard $ Map.member k opts
+        guard $ B.memberR k keys
         return k
-  dValue <- combineDyn readKey options =<< holdDyn (Just k0) (leftmost [eChange, fmap Just setK])
-  return $ Dropdown dValue (attachDynWith readKey options eChange)
+  dValue <- combineDyn readKey ixKeys <=< holdDyn (Just k0) $ leftmost [eChange, fmap Just setK]
+  return $ Dropdown dValue (attachDynWith readKey ixKeys eChange)
 
 liftM concat $ mapM makeLenses
   [ ''TextAreaConfig
@@ -197,10 +227,6 @@ liftM concat $ mapM makeLenses
   , ''CheckboxConfig
   , ''Checkbox
   ]
-
-class HasAttributes a where
-  type Attrs a :: *
-  attributes :: Lens' a (Attrs a)
 
 instance HasAttributes (TextAreaConfig t) where
   type Attrs (TextAreaConfig t) = Dynamic t (Map String String)
@@ -250,6 +276,10 @@ instance HasValue (TextInput t) where
   type Value (TextInput t) = Dynamic t String
   value = _textInput_value
 
+instance HasValue (FileInput t) where
+  type Value (FileInput t) = Dynamic t [File]
+  value = _fileInput_value
+
 instance HasValue (Dropdown t k) where
   type Value (Dropdown t k) = Dynamic t k
   value = _dropdown_value
@@ -295,4 +325,3 @@ instance HasStateModeWitness Edit where
 instance HasStateModeWitness View where
   stateModeWitness = ViewWitness
 -}
-
