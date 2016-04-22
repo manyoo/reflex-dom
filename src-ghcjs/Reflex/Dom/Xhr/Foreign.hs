@@ -148,6 +148,3 @@ xmlHttpRequestGetResponse xhr = do
          Nothing -> return Nothing
          Just ptr -> fmap (Just . XhrResponseBody_ArrayBuffer) $ bsFromArrayBuffer ptr ptr
        _ -> return Nothing
-
-xmlHttpRequestGetResponseURL :: FromJSString result => XMLHttpRequest -> IO result
-xmlHttpRequestGetResponseURL = getResponseURL
