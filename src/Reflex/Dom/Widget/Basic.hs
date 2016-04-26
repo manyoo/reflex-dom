@@ -21,7 +21,7 @@ import Control.Monad.Reader hiding (mapM, mapM_, forM, forM_, sequence, sequence
 import Control.Monad.State hiding (state, mapM, mapM_, forM, forM_, sequence, sequence_)
 import GHCJS.DOM.Node
 import GHCJS.DOM.UIEvent
-import GHCJS.DOM.EventM (on, event, EventM, stopPropagation)
+import GHCJS.DOM.EventM (on, event, EventM, stopPropagation, uiPageXY, mouseXY)
 import GHCJS.DOM.Document
 import GHCJS.DOM.Element as E
 import GHCJS.DOM.Types hiding (Event)
@@ -34,6 +34,9 @@ import Data.Maybe
 import Data.GADT.Compare.TH
 import Data.Bitraversable
 import GHCJS.DOM.MouseEvent
+import qualified GHCJS.DOM.TouchEvent as TouchE
+import qualified GHCJS.DOM.TouchList as TouchL
+import qualified GHCJS.DOM.Touch as Touch
 import Data.IORef
 import Data.Default
 
@@ -592,9 +595,9 @@ type family EventResultType (en :: EventTag) :: * where
   EventResultType 'ResetTag = ()
   EventResultType 'SearchTag = ()
   EventResultType 'SelectstartTag = ()
-  EventResultType 'TouchstartTag = ()
-  EventResultType 'TouchmoveTag = ()
-  EventResultType 'TouchendTag = ()
+  EventResultType 'TouchstartTag = (Int, Int)
+  EventResultType 'TouchmoveTag = (Int, Int)
+  EventResultType 'TouchendTag = (Int, Int)
   EventResultType 'TouchcancelTag = ()
   EventResultType 'MousewheelTag = ()
   EventResultType 'WheelTag = ()
@@ -621,9 +624,14 @@ getKeyEvent = do
       getKeyCode e
 
 getMouseEventCoords :: EventM e MouseEvent (Int, Int)
-getMouseEventCoords = do
-  e <- event
-  bisequence (getX e, getY e)
+getMouseEventCoords = mouseXY
+
+getTouchEventCoords :: EventM e TouchEvent (Int, Int)
+getTouchEventCoords = do
+    e <- event
+    let getXY t = bisequence (Touch.getClientX t, Touch.getClientY t)
+    mayRes <- TouchE.getTouches e >>= mapM (flip TouchL.item 0) >>= mapM getXY . fromMaybe Nothing
+    return $ fromMaybe (0, 0) mayRes
 
 defaultDomEventHandler :: IsElement e => e -> EventName en -> EventM e (EventType en) (Maybe (EventResult en))
 defaultDomEventHandler e evt = liftM (Just . EventResult) $ case evt of
@@ -667,9 +675,9 @@ defaultDomEventHandler e evt = liftM (Just . EventResult) $ case evt of
   Reset -> return ()
   Search -> return ()
   Selectstart -> return ()
-  Touchstart -> return ()
-  Touchmove -> return ()
-  Touchend -> return ()
+  Touchstart -> getTouchEventCoords
+  Touchmove -> getTouchEventCoords
+  Touchend -> getTouchEventCoords
   Touchcancel -> return ()
   Mousewheel -> return ()
   Wheel -> return ()
