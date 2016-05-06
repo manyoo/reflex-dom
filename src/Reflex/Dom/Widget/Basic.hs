@@ -37,6 +37,7 @@ import GHCJS.DOM.MouseEvent
 import qualified GHCJS.DOM.TouchEvent as TouchE
 import qualified GHCJS.DOM.TouchList as TouchL
 import qualified GHCJS.DOM.Touch as Touch
+import qualified GHCJS.DOM.WheelEvent as WheelE
 import Data.IORef
 import Data.Default
 
@@ -600,7 +601,7 @@ type family EventResultType (en :: EventTag) :: * where
   EventResultType 'TouchendTag = (Int, Int)
   EventResultType 'TouchcancelTag = ()
   EventResultType 'MousewheelTag = ()
-  EventResultType 'WheelTag = ()
+  EventResultType 'WheelTag = (Double, Double, Double)
 
 wrapDomEventsMaybe :: (Functor (Event t), IsElement e, MonadIO m, MonadSample t m, MonadReflexCreateTrigger t m, Reflex t, HasPostGui t h m) => e -> (forall en. EventName en -> EventM e (EventType en) (Maybe (f en))) -> m (EventSelector t (WrapArg f EventName))
 wrapDomEventsMaybe element handlers = do
@@ -632,6 +633,14 @@ getTouchEventCoords = do
     let getXY t = bisequence (Touch.getClientX t, Touch.getClientY t)
     mayRes <- TouchE.getTouches e >>= mapM (flip TouchL.item 0) >>= mapM getXY . fromMaybe Nothing
     return $ fromMaybe (0, 0) mayRes
+
+getWheelDeltas :: EventM e WheelEvent (Double, Double, Double)
+getWheelDeltas = do
+    e <- event
+    dx <- WheelE.getDeltaX e
+    dy <- WheelE.getDeltaY e
+    dz <- WheelE.getDeltaZ e
+    return (dx, dy, dz)
 
 defaultDomEventHandler :: IsElement e => e -> EventName en -> EventM e (EventType en) (Maybe (EventResult en))
 defaultDomEventHandler e evt = liftM (Just . EventResult) $ case evt of
@@ -680,7 +689,7 @@ defaultDomEventHandler e evt = liftM (Just . EventResult) $ case evt of
   Touchend -> getTouchEventCoords
   Touchcancel -> return ()
   Mousewheel -> return ()
-  Wheel -> return ()
+  Wheel -> getWheelDeltas
 
 wrapElement :: forall t h m. (Functor (Event t), MonadIO m, MonadSample t m, MonadReflexCreateTrigger t m, Reflex t, HasPostGui t h m) => (forall en. Element -> EventName en -> EventM Element (EventType en) (Maybe (EventResult en))) -> Element -> m (El t)
 wrapElement eh e = do
