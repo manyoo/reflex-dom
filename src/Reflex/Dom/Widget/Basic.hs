@@ -596,9 +596,9 @@ type family EventResultType (en :: EventTag) :: * where
   EventResultType 'ResetTag = ()
   EventResultType 'SearchTag = ()
   EventResultType 'SelectstartTag = ()
-  EventResultType 'TouchstartTag = (Int, Int)
-  EventResultType 'TouchmoveTag = (Int, Int)
-  EventResultType 'TouchendTag = (Int, Int)
+  EventResultType 'TouchstartTag = [(Int, Int)]
+  EventResultType 'TouchmoveTag = [(Int, Int)]
+  EventResultType 'TouchendTag = [(Int, Int)]
   EventResultType 'TouchcancelTag = ()
   EventResultType 'MousewheelTag = ()
   EventResultType 'WheelTag = (Double, Double, Double)
@@ -627,12 +627,17 @@ getKeyEvent = do
 getMouseEventCoords :: EventM e MouseEvent (Int, Int)
 getMouseEventCoords = mouseXY
 
-getTouchEventCoords :: EventM e TouchEvent (Int, Int)
+getTouchEventCoords :: EventM e TouchEvent [(Int, Int)]
 getTouchEventCoords = do
     e <- event
     let getXY t = bisequence (Touch.getClientX t, Touch.getClientY t)
-    mayRes <- TouchE.getTouches e >>= mapM (flip TouchL.item 0) >>= mapM getXY . fromMaybe Nothing
-    return $ fromMaybe (0, 0) mayRes
+        getItem ls idx = TouchL.item ls idx >>= mapM getXY
+        getAllItems ls = do
+            len <- TouchL.getLength ls
+            if len > 0
+                then (fmap fromJust . filter isJust) <$> mapM (getItem ls) [0..len - 1]
+                else return []
+    fromMaybe [] <$> (TouchE.getTouches e >>= mapM getAllItems)
 
 getWheelDeltas :: EventM e WheelEvent (Double, Double, Double)
 getWheelDeltas = do
