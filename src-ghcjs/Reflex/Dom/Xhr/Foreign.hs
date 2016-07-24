@@ -19,6 +19,7 @@ import Reflex.Dom.Internal.Foreign
 import Reflex.Dom.Xhr.Exception
 import Reflex.Dom.Xhr.ResponseType
 import Control.Exception (catch, throwIO)
+import Control.Monad.Trans
 
 prepareWebView :: WebView -> IO ()
 prepareWebView _ = return ()
@@ -94,7 +95,17 @@ xmlHttpRequestGetReadyState :: XMLHttpRequest -> IO Word
 xmlHttpRequestGetReadyState = getReadyState
 
 xmlHttpRequestSetWithCredentials :: XMLHttpRequest -> Bool -> IO ()
-xmlHttpRequestSetWithCredentials = setWithCredentials
+xmlHttpRequestSetWithCredentials = setWithCredentialsInternal
+
+-- these code copied from ghcjs-dom, because casting Bool to JS doesn't work correctly as expected.
+-- use custom code that use Int to transfer the right data
+foreign import javascript unsafe "$1[\"withCredentials\"] = $2 == 1;"
+    js_setWithCredentialsInternal :: XMLHttpRequest -> Int -> IO ()
+-- | <https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest.withCredentials Mozilla XMLHttpRequest.withCredentials documentation> 
+setWithCredentialsInternal :: (MonadIO m) => XMLHttpRequest -> Bool -> m ()
+setWithCredentialsInternal self val
+  = liftIO (js_setWithCredentialsInternal (self) (if val then 1 else 0))
+
 
 xmlHttpRequestGetWithCredentials :: XMLHttpRequest -> IO Bool
 xmlHttpRequestGetWithCredentials = getWithCredentials
