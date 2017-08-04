@@ -21,7 +21,7 @@ import Control.Monad.Reader hiding (mapM, mapM_, forM, forM_, sequence, sequence
 import Control.Monad.State hiding (state, mapM, mapM_, forM, forM_, sequence, sequence_)
 import GHCJS.DOM.Node
 import GHCJS.DOM.UIEvent
-import GHCJS.DOM.EventM (on, event, EventM, stopPropagation, uiPageXY, mouseXY)
+import GHCJS.DOM.EventM (on, event, EventM, stopPropagation, uiPageXY, mouseXY, mouseAltKey)
 import GHCJS.DOM.Document
 import GHCJS.DOM.Element as E
 import GHCJS.DOM.Types hiding (Event)
@@ -562,9 +562,9 @@ type family EventResultType (en :: EventTag) :: * where
   EventResultType 'KeydownTag = Int
   EventResultType 'KeyupTag = Int
   EventResultType 'ScrollTag = Int
-  EventResultType 'MousemoveTag = (Int, Int)
-  EventResultType 'MousedownTag = (Int, Int)
-  EventResultType 'MouseupTag = (Int, Int)
+  EventResultType 'MousemoveTag = ((Int, Int), Bool)
+  EventResultType 'MousedownTag = ((Int, Int), Bool)
+  EventResultType 'MouseupTag = ((Int, Int), Bool)
   EventResultType 'MouseenterTag = ()
   EventResultType 'MouseleaveTag = ()
   EventResultType 'FocusTag = ()
@@ -624,8 +624,11 @@ getKeyEvent = do
     if charCode /= 0 then return charCode else
       getKeyCode e
 
-getMouseEventCoords :: EventM e MouseEvent (Int, Int)
-getMouseEventCoords = mouseXY
+getMouseEventCoords :: EventM e MouseEvent ((Int, Int), Bool)
+getMouseEventCoords = do
+    c <- mouseXY
+    alt <- mouseAltKey
+    return (c, alt)
 
 getTouchEventCoords :: EventM e TouchEvent [(Int, Int)]
 getTouchEventCoords = do
